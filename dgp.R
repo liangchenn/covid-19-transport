@@ -66,7 +66,7 @@ grids <- expand.grid(id=1:obs, t=1:100)
 data <- setDT(grids)
 rm(grids)
 
-# 每一名消費者從五種路線中隨意抽一路線
+# 每一名消費者從 2 種路線中隨意抽一路線
 data[, Ri := sample(Routes, size = .N, replace = T)]
 
 # 疫情爆發於 t=51
