@@ -1,102 +1,88 @@
-library(magrittr)
+# 100-period data generating process
+
 library(data.table)
+library(magrittr)
 library(dplyr)
-
-# ============================== T-period model ==============================
-
+library(dtplyr)
 
 
-# PARAMETERS
-alpha = 1
-beta  = .5
+# Model -------------------------------------------------------------------
 
-# TODO risk may change along time
-alphaRj = c(.0005, .001)# risk coefficients 
-BETA_Rj = c(.05, .05)# risk coefficients
+# u_ij = (xj*b + a*Pj - r*Post - alpha_riskj*Post + XIj) * Ri + epsilon
 
+# Functions ---------------------------------------------------------------
 
-# CONSTANTS
-VMTr = c(164, 307)# distance (km)
-Nr   = c(1881000/1e5, 2817000/1e5) # destination populations (100,000 ppl)
+# Gumbel Extreme Value distribution
+rgev <- function(n=1){
+  return(-log(-log(runif(n))))
+}
 
-Nj     = c(1, 20)# number of contacts
-PRICEj = c(3.5, 4.3)# Price per kilometer
-Xj     = c(1, 3)# utility obtained from choosing j
-
-BETAjr  = matrix(c(.5, 1, 1.5, 2), nrow = 2) + 4# utility of getting somewhere
+# utility function
+u <- function(j, Ri, Post_t){
+  (xj[j]*beta - alpha*Pj[j] - gamma*Post_t - Post_t*alpha_risk_j[j] + XIj[j])*Ri
+}
 
 
-# utility with time noise
-utility <- function(yi, ROUTE, POST = 1, et1, et2, et3, et4){
+# decision function
+
+decision <- function(Ri, Post_t=1){
   
+  u0 <- rgev()
+  u1 <- u(1, Ri, Post_t) + rgev()
+  u2 <- u(2, Ri, Post_t) + rgev()
   
-  # j = 1
-  j = 1
-  uj1 = alpha* .01 * yi + ( (Xj[j] + et1)*beta - alpha*(PRICEj[j] + et2) - POST*alphaRj[j]*(Nj[j] + et3) )*VMTr[ROUTE]*.01 + BETAjr[j, ROUTE] - POST*BETA_Rj[j]*(Nr[ROUTE] + et4) + -log(-log(runif(1)))
+  res <- which.max(c(u0, u1, u2)) - 1
   
-  # j = 2
-  j = 2
-  uj2 = alpha* .01 * yi + ( (Xj[j] + et1)*beta - alpha*(PRICEj[j] + et2) - POST*alphaRj[j]*(Nj[j] + et3) )*VMTr[ROUTE]*.01 + BETAjr[j, ROUTE] - POST*BETA_Rj[j]*(Nr[ROUTE] + et4) + -log(-log(runif(1)))
-  
-  # j = 0
-  uj0 = alpha* .01 * yi + -log(-log(runif(1)))
-  
-  
-  res = which.max(c(uj1, uj2, uj0))
-  res = ifelse(res == 3, 0, res)
-  
-  # sprintf("[%d] %.3f\n", 0:2, c(uj0, uj1, uj2)) %>% cat
   return(res)
 }
 
-# # In every period
-# obs = 1e3
-# # 假設每一期人的 Xj 會變動, (隨時間以及個人)
-# data <- data.table(id=1:obs, y = rnorm(obs, 1e4, 100), t = 1, et = rnorm(1))
-# 
-# 
-FOO <- Vectorize(utility)
-# data[, decision := FOO(y, ROUTE = 1, POST = t > 50, et)]
-# 
+# Vectorized decision function
+
+Decision <- Vectorize(decision)
 
 
-route1_list <- vector('list', length = 100)
-for (i in 1:100) {
-  obs <- 1000
-  dt <- data.table(id = 1:obs, y = rnorm(obs, 1e4, 100), t = i, 
-                   et1 = rnorm(1), et2 = rnorm(1), et3 = rnorm(1), et4 = rnorm(1))
-  
-  route1_list[[i]] <- dt
-  
-}
-route1_dt <- do.call(rbind, route1_list)
-rm(route1_list)
-route1_dt[, decision := FOO(y, ROUTE = 1, POST = t>50, et1, et2, et3, et4)]
+# Parameters ---------------------------------------------------------------
+
+xj <- c(1, 2.2)-.5
+beta <- .5
+
+alpha <- 1
+Pj <- c(3.5, 4.3)
+
+gamma <- .1
+
+alpha_risk_j <- c(.1, .25)
+
+XIj <- c(3.5, 3.5)
 
 
-et_table <- route1_dt[, unique(.SD[, .(t, et1, et2, et3, et4)])]
 
-dt <- route1_dt %>%
-  as.data.frame() %>%
-  group_by(t, decision) %>%
+# Data --------------------------------------------------------------------
+
+# 假設有 100 期，每一期有1000名消費者存在市場。
+obs <- 1000
+Routes <- c(7, 11)
+grids <- expand.grid(id=1:obs, t=1:100)
+data <- setDT(grids)
+rm(grids)
+
+# 每一名消費者從五種路線中隨意抽一路線
+data[, Ri := sample(Routes, size = .N, replace = T)]
+
+# 疫情爆發於 t=51
+data[, Post_t := ifelse(t>50, 1, 0)]
+
+# 決定搭乘 {j=0 : 不出門, j=1: 汽車, j=2: 高鐵ㄋ}
+data[, decision := Decision(Ri, Post_t)]
+
+
+# 統計每一期、每一種路線選擇市佔率
+
+dt <- data %>%
+  lazy_dt() %>%
+  group_by(t, Ri, decision) %>%
   summarise(n = n()) %>%
   mutate(share = n / sum(n)) %>%
-  setDT()
+  as.data.table()
 
-dj0 <- dt[decision==0]
-dj1 <- dt[decision==1]
-dj2 <- dt[decision==2]
-
-dj1$share1 <- dj1$share / dj0$share
-dj2$share2 <- dj2$share / dj0$share
-
-
-data <- et_table[dj2, on = .(t)]
-
-data[, `:=`(Xj = 1.64*(Xj[2]+et1), Pj = 1.64*(PRICEj[2] + et2), Nj = 1.64*(Nj[2] + et3), Nrj = Nr[1] + et4, POST = ifelse(t > 50, 1, 0))]
-
-
-m <- data %$% lm(log(share2) ~ Xj - Pj - POST*Nj + POST*Nrj)
-summary(m)
-# 可以估計出 beta 部分
 
