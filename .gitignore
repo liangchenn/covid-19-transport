@@ -4,4 +4,6 @@
 .RData
 .Ruserdata
 .DS_Store
-
+*.csv
+fig/
+tester*
