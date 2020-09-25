@@ -4,38 +4,27 @@ source('./dgp.R')
 # 回傳 dt 為各期、個別選擇的市佔率
 
 # 先取出各自選擇的資料，方便計算市佔率對數差
-dt0 <- dt[decision==0]
-dt1 <- dt[decision==1]
-dt2 <- dt[decision==2]
+dt0 <- agg_data[decision==0]
+dt1 <- agg_data[decision==1]
+dt2 <- agg_data[decision==2]
 
-# 計算對數差
-dt1$log.share <- log(dt1$share / dt0$share)
-dt2$log.share <- log(dt2$share / dt0$share)
+dt1$logshare <- log(dt1$share / dt0$share)
+dt1$xj <- xj[1] + dt1$et1
+dt1$pj <- Pj[1] + dt1$et2
 
-# 合併為同一個資料集
-est <- rbind(dt1, dt2)
+dt2$logshare <- log(dt2$share / dt0$share)
+dt2$xj <- xj[2] + dt2$et1
+dt2$pj <- Pj[2] + dt2$et2
 
-# 製造 Post, Ri*Post, Ri*xj, Ri*Price, Ri*Post*1{j==2} 等變數
-est[, Post := ifelse(t>50, 1, 0)][, Rpost := Post*Ri][, Rx := ifelse(decision==1, Ri*xj[1], Ri*xj[2])]
-est[, Rp := ifelse(decision==1, Ri*Pj[1], Ri*Pj[2])]
 
-est[, J2 := ifelse(decision==2, 1, 0)][, RpostJ2 := Rpost*J2]
+reg_data <- rbind(dt1, dt2)
+reg_data[, J2:=ifelse(decision==2, 1, 0)]
+reg_data[, post:=ifelse(period>(T_/2), 1, 0)][, postXrisk := post*covid_risk]
 
-# 估計模型
-m <- lm(log.share ~ Rx + Rp + Rpost + RpostJ2, data = est)
-stargazer::stargazer(m, type = 'text')
 
-# 模型估計結果
-
-# 變數       估計值      真實值
-# 
-# Rx         -0.236       0.5
-# 
-# Rp          0.107       -1
-# 
-# Rpost      -0.205      -0.20
-# 
-# RpostJ2    -0.161      -0.16
+m1 <- lm(logshare ~ xj + pj + J2 + postXrisk, data = reg_data)
+m2 <- lm(logshare ~ xj + pj + postXrisk, data = reg_data)
+stargazer::stargazer(m2, m1, type = 'text')
 
 
 

@@ -1,88 +1,65 @@
-# 100-period data generating process
-
 library(data.table)
 library(magrittr)
-library(dplyr)
-library(dtplyr)
+# pandemic version --------------------------------------------------------
+# no variation for`post`
+obs <- 5000
 
 
-# Model -------------------------------------------------------------------
+xj <- c(1, 2)
+beta <- .5
 
-# u_ij = (xj*b + a*Pj - r*Post - alpha_riskj*Post + XIj) * Ri + epsilon
+alpha <- 1
+Pj <- c(3.5, 4.3)
 
-# Functions ---------------------------------------------------------------
+XIj <- c(3.5, 4.35)
 
-# Gumbel Extreme Value distribution
+gamma <- 0.5
+
 rgev <- function(n=1){
   return(-log(-log(runif(n))))
 }
 
-# utility function
-u <- function(j, Ri, Post_t){
-  (xj[j]*beta - alpha*Pj[j] - gamma*Post_t - Post_t*alpha_risk_j[j] + XIj[j])*Ri
+u <- function(j, et1, et2, Post, covid_risk){
+  ((xj[j] + et1)*beta - alpha*(Pj[j] + et2) + XIj[j]) - Post*gamma*covid_risk
 }
 
 
-# decision function
-
-decision <- function(Ri, Post_t=1){
+decision <- function(et1, et2, Post, covid_risk){
   
   u0 <- rgev()
-  u1 <- u(1, Ri, Post_t) + rgev()
-  u2 <- u(2, Ri, Post_t) + rgev()
+  u1 <- u(1, et1, et2, Post, covid_risk) + rgev()
+  u2 <- u(2, et1, et2, Post, covid_risk) + rgev()
   
   res <- which.max(c(u0, u1, u2)) - 1
   
   return(res)
 }
 
-# Vectorized decision function
+decision <- Vectorize(decision)
 
-Decision <- Vectorize(decision)
-
-
-# Parameters ---------------------------------------------------------------
-
-xj <- c(1, 2.2)-.5
-beta <- .5
-
-alpha <- 1
-Pj <- c(3.5, 4.3)
-
-gamma <- .1
-
-alpha_risk_j <- c(.1, .25)
-
-XIj <- c(3.5, 3.5)
-
-
-
-# Data --------------------------------------------------------------------
-
-# 假設有 100 期，每一期有1000名消費者存在市場。
-obs <- 1000
-Routes <- c(7, 11)
-grids <- expand.grid(id=1:obs, t=1:100)
-data <- setDT(grids)
-rm(grids)
-
-# 每一名消費者從 2 種路線中隨意抽一路線
-data[, Ri := sample(Routes, size = .N, replace = T)]
-
-# 疫情爆發於 t=51
-data[, Post_t := ifelse(t>50, 1, 0)]
-
-# 決定搭乘 {j=0 : 不出門, j=1: 汽車, j=2: 高鐵ㄋ}
-data[, decision := Decision(Ri, Post_t)]
+all_data <- data.table()
+T_ <- 1000
+ptm <- proc.time()
+pb <- txtProgressBar(min = 0, max = T_, style = 3)
+for (t in 1:T_) {
+  
+  et1 <- rnorm(1, 0, 1)
+  et2 <- rnorm(1, 0, 1)
+  covid_risk <- rpois(1, lambda = 5)
+  
+  tmp_data <- data.table(id=1:obs, et1=et1, et2=et2, covid_risk=covid_risk)
+  
+  tmp_data[, decision := decision(et1, et2, t>(T_/2), covid_risk)][, period := t]
+  
+  all_data <- rbind(all_data, tmp_data)
+  
+  setTxtProgressBar(pb, t)
+  
+}
+proc.time() - ptm
 
 
-# 統計每一期、每一種路線選擇市佔率
-
-dt <- data %>%
-  lazy_dt() %>%
-  group_by(t, Ri, decision) %>%
-  summarise(n = n()) %>%
-  mutate(share = n / sum(n)) %>%
-  as.data.table()
-
-
+agg_data <- all_data[,{
+  n = .N
+  .SD[, .(share = .N / sum(n)), by=decision]
+}, by=.(period, et1, et2, covid_risk)][order(period, decision)]
