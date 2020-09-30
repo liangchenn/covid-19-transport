@@ -63,3 +63,55 @@ agg_data <- all_data[,{
   n = .N
   .SD[, .(share = .N / sum(n)), by=decision]
 }, by=.(period, et1, et2, covid_risk)][order(period, decision)]
+
+
+
+
+
+# Parallel Version --------------------------------------------------------
+
+# Utilize R's foreach and doParallel package to accelerate the data genrating process.
+
+# redefine decision to un-vectorized version,
+# since vectorized function could yeild error in foreach loop.
+decision <- function(et1, et2, Post, covid_risk){
+  
+  u0 <- -log(-log(runif(1)))
+  u1 <- u(1, et1, et2, Post, covid_risk) + -log(-log(runif(1)))
+  u2 <- u(2, et1, et2, Post, covid_risk) + -log(-log(runif(1)))
+  
+  res <- which.max(c(u0, u1, u2)) - 1
+  
+  return(res)
+}
+
+# number of periods
+T_ <- 1000
+
+# use multiple cores
+cl = makeCluster(4)
+registerDoParallel(cl)
+
+
+ptm <- proc.time()
+res = foreach(t = 1:1000, .packages = "data.table") %dopar% {
+  
+  et1 <- rnorm(1, 0, 1)
+  et2 <- rnorm(1, 0, 1)
+  covid_risk <- rpois(1, lambda = 5)
+  tmp_data <- data.table(id=1:obs, et1=et1, et2=et2, covid_risk=covid_risk)
+  
+  tmp_data[, decision := mapply(decision, et1=et1, et2=et2, Post=t>(T_/2), covid_risk=covid_risk)]
+  
+  tmp_data
+  
+  
+}
+stopCluster(cl)
+proc.time() - ptm
+
+
+# compare of time :
+
+# original version   : 179.4 sec
+# paralleled version :  44.4 sec
